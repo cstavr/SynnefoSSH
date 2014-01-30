@@ -62,6 +62,7 @@ def main():
     if options.list_servers:
         snf_dns = resolver.SynnefoResolver(logger=logger, cloud=options.cloud)
         for cloud_name, cloud_servers in snf_dns.list_servers().items():
+            cloud_name = "cloud: %s" % cloud_name
             print '-' * len(cloud_name)
             print cloud_name
             print '-' * len(cloud_name)
