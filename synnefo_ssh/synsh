@@ -44,6 +44,16 @@ def main():
         '-c', '--cloud',
         dest="cloud",
         help="Use only this cloud")
+    parser.add_option(
+        "--no-keys",
+        dest="no_keys",
+        action="store_true",
+        default=False,
+        help="Disable public key authentication")
+    parser.add_option(
+        '-i', '--ssh-key',
+        dest="ssh_key",
+        help="Identity file")
 
     options, args = parser.parse_args()
 
@@ -86,8 +96,14 @@ def main():
 
     # TODO: Use port_forwarding!
     ssh_command = "ssh"
+    if options.no_keys:
+        ssh_command += " -o PubkeyAuthentication=no"
+    elif options.ssh_key:
+        ssh_command += " -i %s" % options.ssh_key
+
     if user is not None:
         ssh_command += " %s@" % user
+
     if ipv4:
         ssh_command += ipv4
     elif ipv6:
