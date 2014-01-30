@@ -33,6 +33,7 @@ setup(
     include_package_data=True,
     platforms='any',
     scripts=[
-        'synnefo_ssh/synsh'
+        'synnefo_ssh/synsh',
+        'synnefo_ssh/snf-create'
     ]
 )

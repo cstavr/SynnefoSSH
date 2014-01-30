@@ -1,0 +1,102 @@
+#!/usr/bin/env python
+# vim: filetype=python
+
+import os
+import sys
+import logging
+import optparse
+import pydoc
+
+
+from kamaki.cli.config import Config
+from kamaki.clients.cyclades import CycladesClient
+from kamaki.clients.astakos import AstakosClient
+
+def create_logger(debug=False):
+    logger = logging.getLogger("synsh")
+    handler = logging.StreamHandler()
+    if debug:
+        handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    else:
+        handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+    return logger
+
+
+def clear_screen():
+    os.system('cls' if os.name=='nt' else 'clear')
+
+
+
+def get_astakos_client(auth_url, auth_token):
+    return AstakosClient(auth_url, auth_token)
+
+
+def get_cyclades_client(auth_url, auth_token):
+    astakos_client = get_astakos_client(auth_url, auth_token)
+    servers_url = \
+        astakos_client.get_service_endpoints("compute")["publicURL"]
+    return CycladesClient(servers_url, auth_token)
+
+
+def main():
+    usage = "usage %prog [options] server_name"
+    parser = optparse.OptionParser(description="Create Synnefo Virtual Server",
+                                   usage=usage)
+    parser.add_option(
+        '-d', '--debug',
+        dest='debug',
+        default=False,
+        action='store_true',
+        help='Turn on debug output')
+
+    options, args = parser.parse_args()
+
+    logger = create_logger(options.debug)
+
+    kamaki_config = Config()
+    clouds = kamaki_config.items("cloud")
+    print clouds
+    if not clouds:
+        raise RuntimeError("No available clouds")
+
+    clear_screen()
+    for idx, cloud in enumerate(clouds):
+        cloud_name = cloud[0]
+        print "(%s) %s" % (idx, cloud_name)
+    cloud_id = input("Pick cloud: ")
+    cloud_info = clouds[cloud_id][1]
+
+    client = get_cyclades_client(cloud_info["url"], cloud_info["token"])
+
+    flavors = client.list_flavors(detail=True)
+    while True:
+        cpus = input("Pick vcpus: ")
+        ram = input("Pick RAM(GB): ")
+        disk = input("Pick Disk(GB): ")
+        match_flavors = filter(lambda x: x["vcpus"] == cpus and
+                                         x["ram"] == (ram << 10) and
+                                         x["disk"] == disk,
+                                flavors)
+        if match_flavors:
+            break
+
+    for idx, f in enumerate(match_flavors):
+        print "(%s) %s" % (idx, f["SNF:disk_template"])
+    flavor_id = input("Pick disk template: ")
+    flavor = match_flavors[flavor_id]
+
+    clear_screen()
+    images = client.list_images(detail=True)
+    print images
+    for idx, image in enumerate(images):
+        print "(%s) %s" % (idx, image["name"])
+    image_id = input("Pick image: ")
+
+if __name__ == "__main__":
+    sys.exit(main())
