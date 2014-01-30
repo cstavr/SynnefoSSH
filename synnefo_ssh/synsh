@@ -1,0 +1,105 @@
+#!/usr/bin/env python
+# vim: filetype=python
+
+import os
+import sys
+import logging
+import optparse
+from synnefo_ssh import resolver
+
+
+def create_logger(debug=False):
+    logger = logging.getLogger("synsh")
+    handler = logging.StreamHandler()
+    if debug:
+        handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    else:
+        handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+    return logger
+
+
+def main():
+    usage = "usage %prog [options] server_name"
+    parser = optparse.OptionParser(description="Synnefo SSH Wrapper",
+                                   usage=usage)
+    parser.add_option(
+        '-d', '--debug',
+        dest='debug',
+        default=False,
+        action='store_true',
+        help='Turn on debug output')
+    parser.add_option(
+        '-l', '--list',
+        dest='list_servers',
+        default=False,
+        action='store_true',
+        help='List available servers')
+    parser.add_option(
+        '-c', '--cloud',
+        dest="cloud",
+        help="Use only this cloud")
+
+    options, args = parser.parse_args()
+
+    logger = create_logger(options.debug)
+
+    if options.list_servers:
+        snf_dns = resolver.SynnefoResolver(logger=logger, cloud=options.cloud)
+        for cloud_name, cloud_servers in snf_dns.list_servers().items():
+            print '-' * len(cloud_name)
+            print cloud_name
+            print '-' * len(cloud_name)
+            print "\n".join(cloud_servers)
+        sys.exit(0)
+
+    if len(args) != 1:
+        parser.print_help()
+        parser.error("Please specify the name of the Virtual Server")
+
+    user = None
+    server_name = args[0]
+    if "@" in server_name:
+        user, server_name = server_name.split("@", 1)
+
+    snf_dns = resolver.SynnefoResolver(cloud=options.cloud, logger=logger)
+    ssh_info = snf_dns.resolve(server_name)
+    server_user = ssh_info.get("user")
+    ipv4 = ssh_info.get("ipv4")
+    ipv6 = ssh_info.get("ipv6")
+    port_fowarding = ssh_info.get("port_forwarding")
+    logger.info("Connecting to Virtual Server '%s' at cloud '%s'\n"
+                "FQDN: %s\nIPv4: %s\nIPv6: %s\nUser: %s\nPortForwarding: %s",
+                ssh_info["name"], ssh_info["cloud"], ssh_info["fqdn"],
+                ipv4, ipv6, server_user, port_fowarding)
+
+    if user and server_user and user != server_user:
+        logger.debug("Connecting with user '%s' which is different from"
+                     " server user '%s'", user, server_user)
+    else:
+        user = server_user
+
+    # TODO: Use port_forwarding!
+    ssh_command = "ssh"
+    if user is not None:
+        ssh_command += " %s@" % user
+    if ipv4:
+        ssh_command += ipv4
+    elif ipv6:
+        ssh_command += ipv6
+    else:
+        parser.error("Server '%s' has neither an IPv4 or IPv6 public address" %
+                     server_name)
+
+    logger.info("SSH command: %s", ssh_command)
+
+    os.system(ssh_command)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
