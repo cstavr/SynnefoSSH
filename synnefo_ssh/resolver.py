@@ -136,7 +136,7 @@ def get_server_ssh_port_forwarding(server):
 
 def parse_server_name(server_name):
     if "." in server_name:
-        server_name, server_domain = server_name.split(".")[1]
+        server_name, server_domain = server_name.split(".", 1)
         return (server_name, server_domain)
     else:
         return (server_name, None)
