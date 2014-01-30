@@ -79,6 +79,8 @@ def main():
 
     snf_dns = resolver.SynnefoResolver(cloud=options.cloud, logger=logger)
     ssh_info = snf_dns.resolve(server_name)
+    if ssh_info is None:
+        raise ValueError("Server '%s' does not exist" % server_name)
     server_user = ssh_info.get("user")
     ipv4 = ssh_info.get("ipv4")
     ipv6 = ssh_info.get("ipv6")
