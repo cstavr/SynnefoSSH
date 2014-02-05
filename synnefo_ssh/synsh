@@ -85,11 +85,11 @@ def main():
     server_user = ssh_info.get("user")
     ipv4 = ssh_info.get("ipv4")
     ipv6 = ssh_info.get("ipv6")
-    port_fowarding = ssh_info.get("port_forwarding")
+    port_forwarding = ssh_info.get("port_forwarding")
     logger.info("Connecting to Virtual Server '%s' at cloud '%s'\n"
                 "FQDN: %s\nIPv4: %s\nIPv6: %s\nUser: %s\nPortForwarding: %s",
                 ssh_info["name"], ssh_info["cloud"], ssh_info["fqdn"],
-                ipv4, ipv6, server_user, port_fowarding)
+                ipv4, ipv6, server_user, port_forwarding)
 
     if user and server_user and user != server_user:
         logger.debug("Connecting with user '%s' which is different from"
@@ -107,13 +107,18 @@ def main():
     if user is not None:
         ssh_command += " %s@" % user
 
-    if ipv4:
-        ssh_command += ipv4
-    elif ipv6:
-        ssh_command += ipv6
+    if port_forwarding:
+        ssh_command += "%s -p %s" % (port_forwarding["host"],
+                                     port_forwarding["port"])
+
     else:
-        parser.error("Server '%s' has neither an IPv4 or IPv6 public address" %
-                     server_name)
+        if ipv4:
+            ssh_command += ipv4
+        elif ipv6:
+            ssh_command += ipv6
+        else:
+            parser.error("Server '%s' has neither an IPv4 nor"
+                         "an IPv6 public address" % server_name)
 
     logger.info("SSH command: %s", ssh_command)
 
