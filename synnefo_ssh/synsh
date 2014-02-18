@@ -5,7 +5,8 @@ import os
 import sys
 import logging
 import optparse
-from synnefo_ssh import resolver
+from tabulate import tabulate
+from synnefo_ssh import resolver, utils, client
 
 
 def create_logger(debug=False):
@@ -59,14 +60,16 @@ def main():
 
     logger = create_logger(options.debug)
 
+    clouds = [options.cloud] if options.cloud else utils.get_cloud_names()
+
     if options.list_servers:
-        snf_dns = resolver.SynnefoResolver(logger=logger, cloud=options.cloud)
-        for cloud_name, cloud_servers in snf_dns.list_servers().items():
-            cloud_name = "cloud: %s" % cloud_name
-            print '-' * len(cloud_name)
-            print cloud_name
-            print '-' * len(cloud_name)
-            print "\n".join(cloud_servers)
+        for cloud in clouds:
+            c = client.SynnefoClient(cloud)
+            servers = c.compute.list_servers(detail=False)
+            server_names = [s["name"] for s in servers]
+            print tabulate([[s] for s in server_names],
+                           headers=["Cloud: " + cloud],
+                           tablefmt="rst")
         sys.exit(0)
 
     if len(args) != 1:
@@ -78,10 +81,18 @@ def main():
     if "@" in server_name:
         user, server_name = server_name.split("@", 1)
 
-    snf_dns = resolver.SynnefoResolver(cloud=options.cloud, logger=logger)
-    ssh_info = snf_dns.resolve(server_name)
-    if ssh_info is None:
+    server_name, cloud = utils.get_server_cloud(server_name)
+    if cloud is not None:
+        clouds = [cloud]
+
+    for cloud in clouds:
+        snf_dns = resolver.SynnefoResolver(cloud=cloud, logger=logger)
+        ssh_info = snf_dns.resolve(server_name)
+        if ssh_info is not None:
+            break
+    else:
         raise ValueError("Server '%s' does not exist" % server_name)
+
     server_user = ssh_info.get("user")
     ipv4 = ssh_info.get("ipv4")
     ipv6 = ssh_info.get("ipv6")

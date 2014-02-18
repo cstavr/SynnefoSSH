@@ -25,7 +25,7 @@ setup(
     url='http://github.com/cstavr/synnefo-ssh/',
     license='Apache Software License v2.0',
     author='Christos Stavrakakis',
-    install_requires=['kamaki>=0.12.9'],
+    install_requires=['kamaki>=0.12.9', 'tabulate'],
     author_email='stavr.chris@gmail.com',
     description='Easy SSH to Synnefo Virtual Servers',
     long_description=long_description,
