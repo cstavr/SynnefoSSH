@@ -1,6 +1,5 @@
 from kamaki.cli.config import Config
 
-
 def get_cloud_names():
     return [cloud[0] for cloud in Config().items("cloud")]
 

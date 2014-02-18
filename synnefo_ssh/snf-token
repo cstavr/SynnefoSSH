@@ -1,0 +1,138 @@
+#!/usr/bin/env python
+# vim: filetype=python
+
+import os
+import sys
+import logging
+import optparse
+import mechanize
+import urllib
+
+from tabulate import tabulate
+from getpass import getpass
+from synnefo_ssh import resolver, utils, client
+from kamaki.cli.config import Config
+
+TOKEN_COOKIE = "_pithos2_a"
+
+def create_logger(debug=False):
+    logger = logging.getLogger("synsh")
+    handler = logging.StreamHandler()
+    if debug:
+        handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    else:
+        handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+    return logger
+
+
+def extract_cookies(browser):
+    cookies = browser._ua_handlers["_cookies"].cookiejar
+    return dict([(c.name, c.value) for c in cookies])
+
+
+def parse_cookie_token(cookie):
+    return urllib.unquote(cookie).split("|")
+
+
+def main():
+    usage = "usage %prog [options]"
+    parser = optparse.OptionParser(description="Update Synnefo Tokens",
+                                   usage=usage)
+    parser.add_option(
+        '-d', '--debug',
+        dest='debug',
+        default=False,
+        action='store_true',
+        help='Turn on debug output')
+    parser.add_option(
+        '-l', '--list',
+        dest='list_clouds',
+        default=False,
+        action='store_true',
+        help='List available clouds')
+    parser.add_option(
+        '-c', '--cloud',
+        dest="cloud",
+        help="Use only this cloud")
+    parser.add_option(
+        '-n', '--renew',
+        dest="renew",
+        help="Renew the token")
+
+    options, args = parser.parse_args()
+
+    logger = create_logger(options.debug)
+
+    clouds = [options.cloud] if options.cloud else utils.get_cloud_names()
+
+    if options.list_clouds:
+        _clouds = []
+        for cloud in clouds:
+            url, _ = utils.get_cloud_credentials(cloud)
+            _clouds.append([cloud, url])
+        print _clouds
+        print tabulate(_clouds,
+                       headers=["Cloud", "URL"],
+                       tablefmt="rst")
+        sys.exit(0)
+
+    for cloud in clouds:
+        c = client.SynnefoClient(cloud)
+        config = Config()
+        ui_url = None
+        for service in c.astakos.get_endpoints()["access"]["serviceCatalog"]:
+            if service["name"] == "astakos_weblogin":
+                ui_url = service["endpoints"][0]["SNF:uiURL"]
+        assert(ui_url), "Weblogin URL not found."
+        try:
+            username = config.get_cloud(cloud, "username")
+        except KeyError:
+            username = raw_input("Username for cloud %s (%s):\n" %
+                                 (cloud, ui_url))
+        try:
+            password = config.get_cloud(cloud, "password")
+        except KeyError:
+            password = getpass("Password for cloud %s (%s):\n" %
+                                 (cloud, ui_url))
+
+        br = mechanize.Browser()
+        if options.debug:
+            br.set_debug_http(True)
+            br.set_debug_responses(True)
+            br.set_debug_redirects(True)
+        br.open(ui_url)
+        br.select_form(nr=0)
+        br["username"] = username
+        br["password"] = password
+        response = br.submit()
+        cookies = extract_cookies(br)
+        if TOKEN_COOKIE not in cookies:
+            raise RuntimeError("Failed to authenticate!")
+        token_cookie = cookies[TOKEN_COOKIE]
+        uuid, old_token = parse_cookie_token(token_cookie)
+
+        logger.info("Logged in successfully! UUID: %s", uuid)
+
+        if options.renew:
+            logger.info("Renew the token..")
+            br.addheaders = [("Referer", ui_url + "/profile")]
+            br.open(ui_url + "/profile/update_token",
+                    data = "csrfmiddlewaretoken=%s" % cookies["csrftoken"])
+            cookies = extract_cookies(br)
+            token_cookie = cookies[TOKEN_COOKIE]
+            uuid, new_token = parse_cookie_token(token_cookie)
+            token = new_token
+        else:
+            token = old_token
+
+        config.set_cloud(cloud, "token", token)
+        logger.info("Updated token in kamaki config file.")
+
+if __name__ == "__main__":
+    sys.exit(main())
