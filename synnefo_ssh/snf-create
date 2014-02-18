@@ -6,6 +6,13 @@ import sys
 import logging
 import optparse
 import pydoc
+import tabulate
+import itertools
+import os
+import time
+
+from synnefo_ssh import utils
+from synnefo_ssh.client import SynnefoClient
 
 
 from kamaki.cli.config import Config
@@ -28,21 +35,45 @@ def create_logger(debug=False):
     return logger
 
 
+def ask_user(question, choices=None):
+    if choices is None:
+        return raw_input(question)
+    choices = list(choices)
+    nchoices = enumerate(choices)
+    nchoices = ["(%s) %s" % (n, c) for n, c in enumerate(choices)]
+    table = []
+    rows = os.environ.get("LINES", 40) - 2
+    columns = os.environ.get("COLUMNS", 72)
+    for i in xrange(0, len(nchoices), rows):
+        table.append(nchoices[i:i+rows])
+    ntable = itertools.izip_longest(*table)
+    print tabulate.tabulate(ntable, tablefmt="orgbtl")
+    while True:
+        idx = raw_input(question)
+        try:
+            return choices[int(idx)]
+        except (IndexError, ValueError, TypeError):
+            print "Invalid Value: "
+
+
 def clear_screen():
     os.system('cls' if os.name=='nt' else 'clear')
 
 
+class Image(object):
+    def __init__(self, img_dict):
+        self.id = img_dict["id"]
+        self.owner = img_dict["owner"]
+        self.name = img_dict["name"]
+        self.public = img_dict["is_public"]
 
-def get_astakos_client(auth_url, auth_token):
-    return AstakosClient(auth_url, auth_token)
+    def __str__(self):
+        prefix = "public:" if self.public else "private:"
+        return "%s%s" % (prefix, self.name)
 
-
-def get_cyclades_client(auth_url, auth_token):
-    astakos_client = get_astakos_client(auth_url, auth_token)
-    servers_url = \
-        astakos_client.get_service_endpoints("compute")["publicURL"]
-    return CycladesClient(servers_url, auth_token)
-
+def foo(*args, **kwargs):
+    print args, kwargs
+    yield
 
 def main():
     usage = "usage %prog [options] server_name"
@@ -59,44 +90,49 @@ def main():
 
     logger = create_logger(options.debug)
 
-    kamaki_config = Config()
-    clouds = kamaki_config.items("cloud")
+    clouds = utils.get_cloud_names()
     print clouds
     if not clouds:
         raise RuntimeError("No available clouds")
 
     clear_screen()
-    for idx, cloud in enumerate(clouds):
-        cloud_name = cloud[0]
-        print "(%s) %s" % (idx, cloud_name)
-    cloud_id = input("Pick cloud: ")
-    cloud_info = clouds[cloud_id][1]
+    cloud = ask_user("Cloud: ", clouds)
 
-    client = get_cyclades_client(cloud_info["url"], cloud_info["token"])
+    client = SynnefoClient(cloud=cloud)
 
-    flavors = client.list_flavors(detail=True)
-    while True:
-        cpus = input("Pick vcpus: ")
-        ram = input("Pick RAM(GB): ")
-        disk = input("Pick Disk(GB): ")
-        match_flavors = filter(lambda x: x["vcpus"] == cpus and
-                                         x["ram"] == (ram << 10) and
-                                         x["disk"] == disk,
-                                flavors)
-        if match_flavors:
-            break
+    flavors = client.compute.list_flavors(detail=True)
+    disk_templates = set([f["SNF:disk_template"] for f in flavors])
+    disk_template = ask_user("Disk Template: ", disk_templates)
+    flavors = filter(lambda f: f["SNF:disk_template"] == disk_template,
+                     flavors)
+    cpu = ask_user("CPU: ", sorted(set([f["vcpus"] for f in flavors])))
+    flavors = filter(lambda f: f["vcpus"] == cpu, flavors)
+    ram = ask_user("RAM: ", sorted(set([f["ram"] for f in flavors])))
+    flavors = filter(lambda f: f["ram"] == ram, flavors)
+    disk = ask_user("Disk: ", sorted(set([f["disk"] for f in flavors])))
+    flavors = filter(lambda f: f["disk"] == disk, flavors)
+    assert(len(flavors) == 1)
+    flavor = flavors[0]
 
-    for idx, f in enumerate(match_flavors):
-        print "(%s) %s" % (idx, f["SNF:disk_template"])
-    flavor_id = input("Pick disk template: ")
-    flavor = match_flavors[flavor_id]
+    images = client.image.list_public(detail=True)
+    image = ask_user("Image: ", [Image(i) for i in images])
+    image = filter(lambda i: i["id"] == image.id, images)[0]
 
+    name = ask_user("Server Name: ")
     clear_screen()
-    images = client.list_images(detail=True)
-    print images
-    for idx, image in enumerate(images):
-        print "(%s) %s" % (idx, image["name"])
-    image_id = input("Pick image: ")
+    info = [("image", image["id"]),
+            ("flavor", flavor["id"]),
+            ("name", name)]
+    print tabulate.tabulate(info)
+
+    server = client.compute.create_server(name=name, flavor_id=flavor["id"],
+                                          image_id=image["id"])
+    server_id = server["id"]
+    while server["status"] == "BUILD":
+        server = client.compute.get_server_details(server_id=server_id)
+        time.sleep(5)
+
+    print 'Server with ID %s successfully build' % server_id
 
 if __name__ == "__main__":
     sys.exit(main())
