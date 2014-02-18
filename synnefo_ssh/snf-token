@@ -63,6 +63,8 @@ def main():
     parser.add_option(
         '-n', '--renew',
         dest="renew",
+        default=False,
+        action="store_true",
         help="Renew the token")
 
     options, args = parser.parse_args()
@@ -132,7 +134,9 @@ def main():
             token = old_token
 
         config.set_cloud(cloud, "token", token)
-        logger.info("Updated token in kamaki config file.")
+        config.write()
+        logger.info("Updated token for cloud '%s' in kamaki config file.",
+                     cloud)
 
 if __name__ == "__main__":
     sys.exit(main())
