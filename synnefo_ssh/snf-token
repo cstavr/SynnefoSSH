@@ -86,6 +86,13 @@ def main():
 
     for cloud in clouds:
         c = client.SynnefoClient(cloud)
+        if not options.renew:
+            # Skip cloud if token is valid
+            try:
+                c.astakos.authenticate()
+                continue
+            except:
+                pass
         config = Config()
         ui_url = None
         for service in c.astakos.get_endpoints()["access"]["serviceCatalog"]:
