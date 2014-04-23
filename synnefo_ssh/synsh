@@ -4,9 +4,25 @@
 import os
 import sys
 import logging
-import optparse
+from optparse import OptionParser, BadOptionError
 from tabulate import tabulate
 from synnefo_ssh import resolver, utils, client
+from copy import copy
+
+class PassThroughOptionParser(OptionParser):
+
+    def _process_long_opt(self, rargs, values):
+        try:
+            OptionParser._process_long_opt(self, rargs, values)
+        except BadOptionError, err:
+            self.largs.append(err.opt_str)
+
+    def _process_short_opts(self, rargs, values):
+        _rargs = copy(rargs)
+        try:
+            OptionParser._process_short_opts(self, rargs, values)
+        except BadOptionError, err:
+            self.largs.append(_rargs[0])
 
 
 def create_logger(debug=False):
@@ -26,9 +42,9 @@ def create_logger(debug=False):
 
 
 def main():
-    usage = "usage %prog [options] server_name"
-    parser = optparse.OptionParser(description="Synnefo SSH Wrapper",
-                                   usage=usage)
+    usage = "usage %prog [options] server_name [ssh options]"
+    parser = PassThroughOptionParser(description="Synnefo SSH Wrapper",
+                                     usage=usage)
     parser.add_option(
         '-d', '--debug',
         dest='debug',
@@ -78,7 +94,7 @@ def main():
                            tablefmt="rst")
         sys.exit(0)
 
-    if len(args) != 1:
+    if len(args) == 0:
         parser.print_help()
         parser.error("Please specify the name of the Virtual Server")
 
@@ -88,6 +104,7 @@ def main():
         user, server_name = server_name.split("@", 1)
 
     server_name, cloud = utils.get_server_cloud(server_name)
+    print "Server Name: ", server_name
     if cloud is not None:
         clouds = [cloud]
 
@@ -136,6 +153,9 @@ def main():
         else:
             parser.error("Server '%s' has neither an IPv4 nor"
                          "an IPv6 public address" % server_name)
+
+    if args[1:]:
+        ssh_command += " " + " ".join(args[1:])
 
     logger.info("SSH command: %s", ssh_command)
 
