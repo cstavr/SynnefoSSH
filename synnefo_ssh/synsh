@@ -55,6 +55,12 @@ def main():
         '-i', '--ssh-key',
         dest="ssh_key",
         help="Identity file")
+    parser.add_option(
+        '-n', '--dry-run',
+        dest="dry_run",
+        action="store_true",
+        default=False,
+        help="Dry-Run mode. Only print connection information.")
 
     options, args = parser.parse_args()
 
@@ -133,7 +139,8 @@ def main():
 
     logger.info("SSH command: %s", ssh_command)
 
-    os.system(ssh_command)
+    if not options.dry_run:
+        os.system(ssh_command)
 
 
 if __name__ == "__main__":
