@@ -104,7 +104,7 @@ def main():
         user, server_name = server_name.split("@", 1)
 
     server_name, cloud = utils.get_server_cloud(server_name)
-    print "Server Name: ", server_name
+    logger.info("Server Name: %s Cloud: %s", server_name, cloud)
     if cloud is not None:
         clouds = [cloud]
 
@@ -138,8 +138,10 @@ def main():
     elif options.ssh_key:
         ssh_command += " -i %s" % options.ssh_key
 
+    hostname = ""
     if user is not None:
         ssh_command += " %s@" % user
+        hostname += "%s@" % user
 
     if port_forwarding:
         ssh_command += "%s -p %s" % (port_forwarding["host"],
@@ -148,8 +150,10 @@ def main():
     else:
         if ipv4:
             ssh_command += ipv4
+            hostname += ipv4
         elif ipv6:
             ssh_command += ipv6
+            hostname += ipv6
         else:
             parser.error("Server '%s' has neither an IPv4 nor"
                          "an IPv6 public address" % server_name)
@@ -159,8 +163,11 @@ def main():
 
     logger.info("SSH command: %s", ssh_command)
 
-    if not options.dry_run:
+    if options.dry_run:
+        print hostname
+    else:
         os.system(ssh_command)
+
 
 
 if __name__ == "__main__":
