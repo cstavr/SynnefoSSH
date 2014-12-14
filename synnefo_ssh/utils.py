@@ -1,4 +1,10 @@
 from kamaki.cli.config import Config
+if Config().getboolean('global', 'ignore_ssl'):
+    try:
+        from kamaki.clients.utils import https
+        https.patch_ignore_ssl()
+    except:
+        pass
 
 def get_cloud_names():
     return [cloud[0] for cloud in Config().items("cloud")]
