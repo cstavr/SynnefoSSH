@@ -1,7 +1,9 @@
-from kamaki.clients.cyclades import CycladesClient
+from kamaki.clients.cyclades import CycladesClient, CycladesNetworkClient
 from kamaki.clients.astakos import AstakosClient
 from kamaki.clients.network import NetworkClient
 from kamaki.clients.image import ImageClient
+from kamaki.clients.blockstorage import BlockStorageClient
+
 
 from synnefo_ssh import utils
 
@@ -24,7 +26,11 @@ class SynnefoClient(object):
         self.auth_url, self.token = auth_url, token
         self.astakos = AstakosClient(self.auth_url, self.token)
         self.endpoints = self.get_api_endpoints()
+        self.volume = BlockStorageClient(self.endpoints["cyclades_volume"],
+                                         token)
         self.compute = CycladesClient(self.endpoints["cyclades_compute"],
+                                      token)
+        self.cyclades_networks = CycladesNetworkClient(self.endpoints["cyclades_network"],
                                       token)
         self.network = NetworkClient(self.endpoints["cyclades_network"], token)
         self.image = ImageClient(self.endpoints["cyclades_plankton"], token)

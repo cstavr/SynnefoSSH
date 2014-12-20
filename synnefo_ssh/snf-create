@@ -5,19 +5,12 @@ import os
 import sys
 import logging
 import optparse
-import pydoc
 import tabulate
 import itertools
-import os
-import time
+import base64
 
-from synnefo_ssh import utils
-from synnefo_ssh.client import SynnefoClient
+from synnefo_ssh import utils, client
 
-
-from kamaki.cli.config import Config
-from kamaki.clients.cyclades import CycladesClient
-from kamaki.clients.astakos import AstakosClient
 
 def create_logger(debug=False):
     logger = logging.getLogger("synsh")
@@ -35,7 +28,7 @@ def create_logger(debug=False):
     return logger
 
 
-def ask_user(question, choices=None):
+def ask_user(question, choices=None, multiple=False):
     if choices is None:
         return raw_input(question)
     choices = list(choices)
@@ -43,7 +36,7 @@ def ask_user(question, choices=None):
     nchoices = ["(%s) %s" % (n, c) for n, c in enumerate(choices)]
     table = []
     rows = os.environ.get("LINES", 40) - 2
-    columns = os.environ.get("COLUMNS", 72)
+    # columns = os.environ.get("COLUMNS", 72)
     for i in xrange(0, len(nchoices), rows):
         table.append(nchoices[i:i+rows])
     ntable = itertools.izip_longest(*table)
@@ -51,13 +44,19 @@ def ask_user(question, choices=None):
     while True:
         idx = raw_input(question)
         try:
-            return choices[int(idx)]
+            if multiple:
+                _choices = []
+                for i in idx.split(","):
+                    _choices.append(choices[int(i)])
+                return _choices
+            else:
+                return choices[int(idx)]
         except (IndexError, ValueError, TypeError):
             print "Invalid Value: "
 
 
 def clear_screen():
-    os.system('cls' if os.name=='nt' else 'clear')
+    os.system('cls' if os.name == 'nt' else 'clear')
 
 
 class Image(object):
@@ -71,9 +70,146 @@ class Image(object):
         prefix = "public:" if self.public else "private:"
         return "%s%s" % (prefix, self.name)
 
-def foo(*args, **kwargs):
-    print args, kwargs
-    yield
+
+def get_cloud(options):
+    clouds = utils.get_cloud_names()
+    if not clouds:
+        raise RuntimeError("No available clouds")
+
+    if options.cloud:
+        cloud = options.cloud
+        if cloud not in clouds:
+            raise RuntimeError("Unknown cloud '%s'" % cloud)
+    else:
+        clear_screen()
+        cloud = ask_user("Cloud: ", clouds)
+    return cloud
+
+
+def get_flavor(client, options):
+    flavors = client.compute.list_flavors(detail=True)
+
+    flavor = None
+    if options.flavor:
+        flavor = options.flavor.lower()
+        if flavor.startswith("id:"):
+            flavor_id = flavor.replace("id:", "")
+            flavors = [f for f in flavors if f["id"] == flavor_id]
+        else:
+            flavors = [f for f in flavors
+                       if f["name"].lower().find(flavor) != -1]
+
+    if len(flavors) > 1:
+        disk_templates = set([f["SNF:disk_template"] for f in flavors])
+        if len(disk_templates) > 1:
+            disk_template = ask_user("Disk Template: ", disk_templates)
+        else:
+            disk_template = disk_templates[0]
+        flavors = filter(lambda f: f["SNF:disk_template"] == disk_template,
+                         flavors)
+        cpus = sorted(set([f["vcpus"] for f in flavors]))
+        if len(cpus) > 1:
+            cpu = ask_user("CPU: ", cpus)
+        else:
+            cpu = cpus[0]
+        flavors = filter(lambda f: f["vcpus"] == cpu, flavors)
+        rams = sorted(set([f["ram"] for f in flavors]))
+        if len(rams) > 1:
+            ram = ask_user("RAM: ", rams)
+        else:
+            ram = rams[0]
+        flavors = filter(lambda f: f["ram"] == ram, flavors)
+        disks = sorted(set([f["disk"] for f in flavors]))
+        if len(disks) > 1:
+            disk = ask_user("Disk: ",  disks)
+        else:
+            disk = disks[0]
+        flavors = filter(lambda f: f["disk"] == disk, flavors)
+    flavor = flavors[0]
+    return flavor
+
+
+def get_image(client, options):
+    images = client.image.list_public(detail=True)
+    image = None
+    if options.image:
+        image = options.image.lower()
+        if image.startswith("id:"):
+            image_id = image.replace("id:", "")
+            images = [i for i in images if i["id"] == image_id]
+        else:
+            images = [i for i in images
+                      if i["name"].lower().find(image) != -1]
+    if len(images) > 1:
+        image = ask_user("Image: ", [Image(i) for i in images])
+        image = filter(lambda i: i["id"] == image.id, images)
+    image = images[0]
+    return image
+
+
+def get_project(client, options):
+    projects = client.astakos.get_projects(state='active')
+    project = None
+    if options.project:
+        return options.project
+    if len(projects) > 1:
+        _, p_id = ask_user("Projects: ", [(p["name"], p["id"])
+                                          for p in projects])
+        projects = [p for p in projects if p["id"] == p_id]
+    project = projects[0]
+    return project
+
+
+def get_networks(client, options):
+    networks = [n for n in client.network.list_networks()
+                if not n["public"]]
+    networks.insert(0, {"id": "public"})
+    if options.networks:
+        networks_ids = options.networks.split(",")
+        networks = [n for n in networks if n["id"] in networks_ids]
+    else:
+        networks_ids = [
+            n[0] for n in ask_user("Networks(comma-separated): ",
+                                   [(n["id"], "name") for n in networks],
+                                   multiple=True)]
+    # preserve order!
+    _networks = []
+    for n_id in networks_ids:
+        _networks.append([n for n in networks if n["id"] == n_id][0])
+    return _networks
+
+
+def get_floating_ip(client, project, exclude):
+    for fip in client.network.list_floatingips():
+        if fip["port_id"] is None and fip["id"] not in exclude:
+            return fip
+    public_networks_ids = [n["id"] for n in client.network.list_networks()
+                           if n["SNF:floating_ip_pool"]]
+    for n_id in public_networks_ids:
+        try:
+            return client.cyclades_networks.create_floatingip(
+                    int(n_id), project_id=project["id"])
+        except Exception:
+            pass
+    raise Exception("Failed to allocate floating IP")
+
+
+def get_personality(options):
+    if options.personality:
+        filename = os.path.expanduser(options.personality)
+        with open(filename) as f:
+            contents = base64.b64encode(f.read())
+
+        personality = [
+            {"owner": "root",
+             "group": "root",
+             "path": "/root/.ssh/authorized_keys",
+             "mode": 0600,
+             "contents": contents}]
+        return personality
+    else:
+        return []
+
 
 def main():
     usage = "usage %prog [options] server_name"
@@ -85,54 +221,65 @@ def main():
         default=False,
         action='store_true',
         help='Turn on debug output')
+    parser.add_option("-c", "--cloud", dest="cloud")
+    parser.add_option("-f", "--flavor", dest="flavor")
+    parser.add_option("-i", "--image", dest="image")
+    parser.add_option("-n", "--number", dest="number", default="1")
+    parser.add_option("-p", "--project", dest="project")
+    parser.add_option("--key", dest="personality")
+    parser.add_option("--networks", dest="networks")
 
     options, args = parser.parse_args()
+    if len(args) != 1:
+        parser.error("Wrong number of arguments")
+    name = args[0]
 
-    logger = create_logger(options.debug)
+    cloud = get_cloud(options)
+    c = client.SynnefoClient(cloud=cloud)
 
-    clouds = utils.get_cloud_names()
-    print clouds
-    if not clouds:
-        raise RuntimeError("No available clouds")
+    flavor = get_flavor(c, options)
+    image = get_image(c, options)
+    project = get_project(c, options)
+    networks = get_networks(c, options)
+    personality = get_personality(options)
 
     clear_screen()
-    cloud = ask_user("Cloud: ", clouds)
 
-    client = SynnefoClient(cloud=cloud)
+    ntable = [("Cloud", cloud),
+              ("Flavor", flavor["name"]),
+              ("Image", "%s:%s" % ("public"
+                                   if image["is_public"] else "private",
+                                   image["name"])),
+              ("Project", project["name"])]
+    print tabulate.tabulate(ntable, tablefmt="orgbtl")
+    if ask_user("Confirm: ", ["Yes", "No"]) == "No":
+        print "Aborting..."
+        return
 
-    flavors = client.compute.list_flavors(detail=True)
-    disk_templates = set([f["SNF:disk_template"] for f in flavors])
-    disk_template = ask_user("Disk Template: ", disk_templates)
-    flavors = filter(lambda f: f["SNF:disk_template"] == disk_template,
-                     flavors)
-    cpu = ask_user("CPU: ", sorted(set([f["vcpus"] for f in flavors])))
-    flavors = filter(lambda f: f["vcpus"] == cpu, flavors)
-    ram = ask_user("RAM: ", sorted(set([f["ram"] for f in flavors])))
-    flavors = filter(lambda f: f["ram"] == ram, flavors)
-    disk = ask_user("Disk: ", sorted(set([f["disk"] for f in flavors])))
-    flavors = filter(lambda f: f["disk"] == disk, flavors)
-    assert(len(flavors) == 1)
-    flavor = flavors[0]
-
-    images = client.image.list_public(detail=True)
-    image = ask_user("Image: ", [Image(i) for i in images])
-    image = filter(lambda i: i["id"] == image.id, images)[0]
-
-    name = ask_user("Server Name: ")
-    clear_screen()
-    info = [("image", image["id"]),
-            ("flavor", flavor["id"]),
-            ("name", name)]
-    print tabulate.tabulate(info)
-
-    server = client.compute.create_server(name=name, flavor_id=flavor["id"],
-                                          image_id=image["id"])
-    server_id = server["id"]
-    while server["status"] == "BUILD":
-        server = client.compute.get_server_details(server_id=server_id)
-        time.sleep(5)
-
-    print 'Server with ID %s successfully build' % server_id
+    servers = []
+    number = int(options.number)
+    for i in xrange(0, number):
+        vm_networks = []
+        fips = []
+        for n in networks:
+            if n["id"] == "public":
+                fip = get_floating_ip(c, project, exclude=fips)
+                fips.append(fip["id"])
+                vm_networks.append({"uuid": fip["floating_network_id"],
+                                    "address": fip["floating_ip_address"]})
+            else:
+                vm_networks.append({"uuid": n["id"]})
+        kwargs = {
+            "name": name if number == 1 else "%s-%s" % (name, i),
+            "flavor_id": flavor["id"],
+            "image_id": image["id"],
+            "project_id":  project["id"],
+            "networks": vm_networks,
+            "personality": personality,
+        }
+        server = c.compute.create_server(**kwargs)
+        servers.append(server)
+    utils.pretty_print_servers(c, [s["id"] for s in servers])
 
 if __name__ == "__main__":
     sys.exit(main())

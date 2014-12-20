@@ -77,6 +77,12 @@ def main():
         action="store_true",
         default=False,
         help="Dry-Run mode. Only print connection information.")
+    parser.add_option(
+        "--dump",
+        dest="dump",
+        action="store_true",
+        default=False,
+        help="Dump all servers")
 
     options, args = parser.parse_args()
 
@@ -92,6 +98,11 @@ def main():
             print tabulate([[s] for s in server_names],
                            headers=["Cloud: " + cloud],
                            tablefmt="rst")
+        sys.exit(0)
+    elif options.dump:
+        for cloud in clouds:
+            c = client.SynnefoClient(cloud)
+            utils.pretty_print_servers(c)
         sys.exit(0)
 
     if len(args) == 0:
