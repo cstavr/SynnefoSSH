@@ -1,12 +1,17 @@
 from kamaki.cli.config import Config
 import tabulate
 
-if Config().getboolean('global', 'ignore_ssl'):
-    try:
-        from kamaki.clients.utils import https
+try:
+    from kamaki.clients.utils import https
+    if Config().getboolean('global', 'ignore_ssl'):
         https.patch_ignore_ssl()
-    except:
-        pass
+    else:
+        ca_file = Config().get('global', 'ca_certs')
+        if ca_file is None:
+            raise ValueError("ca_certs cannot be None")
+        https.patch_with_certs(ca_file)
+except ImportError:
+    pass
 
 
 def get_cloud_names():
